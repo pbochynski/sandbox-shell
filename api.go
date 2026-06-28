@@ -28,6 +28,10 @@ func NewAPIHandler(s *Shell) http.Handler {
 		if timeout <= 0 {
 			timeout = 30 * time.Second
 		}
+		const maxTimeout = 600 * time.Second
+		if timeout > maxTimeout {
+			timeout = maxTimeout
+		}
 		res, err := s.Exec(req.Command, timeout)
 		if err != nil {
 			if strings.Contains(err.Error(), "timeout") {

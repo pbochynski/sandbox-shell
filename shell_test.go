@@ -93,4 +93,13 @@ func TestShell_timeout(t *testing.T) {
 	if !strings.Contains(err.Error(), "timeout") {
 		t.Errorf("error = %q, want it to contain 'timeout'", err.Error())
 	}
+
+	// Shell must be usable after a timeout (bash was restarted).
+	res, err := s.Exec("echo after-timeout", 5*time.Second)
+	if err != nil {
+		t.Fatalf("Exec after timeout: %v", err)
+	}
+	if strings.TrimSpace(res.Stdout) != "after-timeout" {
+		t.Errorf("stdout after restart = %q, want %q", res.Stdout, "after-timeout")
+	}
 }

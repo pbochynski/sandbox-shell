@@ -25,7 +25,8 @@ func main() {
 	}
 	go func() {
 		if err := ttyd.Wait(); err != nil && ctx.Err() == nil {
-			fmt.Fprintf(os.Stderr, "ttyd exited: %v\n", err)
+			fmt.Fprintf(os.Stderr, "ttyd exited unexpectedly: %v — shutting down\n", err)
+			cancel()
 		}
 	}()
 
