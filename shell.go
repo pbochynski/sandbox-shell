@@ -24,22 +24,23 @@ type Shell struct {
 	cmd    *exec.Cmd
 	stdin  io.WriteCloser
 	stdout *bufio.Scanner
+	pr     *os.File // stdout pipe read end; must be closed on restart to prevent fd leak
 	mu     sync.Mutex
 }
 
 // newBashProcess starts a fresh bash subprocess and returns its pieces.
 // Callers must close pw and stdinR after cmd.Start() succeeds.
-func newBashProcess() (cmd *exec.Cmd, stdinW io.WriteCloser, scanner *bufio.Scanner, err error) {
-	pr, pw, err := os.Pipe()
+func newBashProcess() (cmd *exec.Cmd, stdinW io.WriteCloser, pr *os.File, scanner *bufio.Scanner, err error) {
+	prLocal, pw, err := os.Pipe()
 	if err != nil {
-		return nil, nil, nil, fmt.Errorf("pipe: %w", err)
+		return nil, nil, nil, nil, fmt.Errorf("pipe: %w", err)
 	}
 
 	stdinR, stdinW, err := os.Pipe()
 	if err != nil {
-		pr.Close()
+		prLocal.Close()
 		pw.Close()
-		return nil, nil, nil, fmt.Errorf("stdin pipe: %w", err)
+		return nil, nil, nil, nil, fmt.Errorf("stdin pipe: %w", err)
 	}
 
 	cmd = exec.Command("bash", "--norc", "--noprofile")
@@ -48,23 +49,23 @@ func newBashProcess() (cmd *exec.Cmd, stdinW io.WriteCloser, scanner *bufio.Scan
 	cmd.Stderr = pw // initial stderr goes to same pipe; redirected per-command
 
 	if err = cmd.Start(); err != nil {
-		pr.Close()
+		prLocal.Close()
 		pw.Close()
 		stdinR.Close()
 		stdinW.Close()
-		return nil, nil, nil, fmt.Errorf("start bash: %w", err)
+		return nil, nil, nil, nil, fmt.Errorf("start bash: %w", err)
 	}
 	pw.Close()     // parent doesn't write to stdout pipe
 	stdinR.Close() // child owns the read end
 
-	sc := bufio.NewScanner(pr)
+	sc := bufio.NewScanner(prLocal)
 	sc.Buffer(make([]byte, 1<<20), 1<<20) // raise limit to 1 MiB per line
-	return cmd, stdinW, sc, nil
+	return cmd, stdinW, prLocal, sc, nil
 }
 
 // NewShell starts a bash subprocess and returns a ready Shell.
 func NewShell() (*Shell, error) {
-	cmd, stdinW, sc, err := newBashProcess()
+	cmd, stdinW, pr, sc, err := newBashProcess()
 	if err != nil {
 		return nil, err
 	}
@@ -72,24 +73,30 @@ func NewShell() (*Shell, error) {
 		cmd:    cmd,
 		stdin:  stdinW,
 		stdout: sc,
+		pr:     pr,
 	}, nil
 }
 
 // restartBash kills the current bash process, waits for it to exit, then
 // starts a fresh one. It must be called with s.mu held.
 func (s *Shell) restartBash() error {
+	// Close old stdout pipe read end to prevent fd leak.
+	if s.pr != nil {
+		s.pr.Close()
+	}
 	// Close stdin first so bash sees EOF, then kill it to be sure.
 	s.stdin.Close()
 	s.cmd.Process.Kill()
 	s.cmd.Wait()
 
-	cmd, stdinW, sc, err := newBashProcess()
+	cmd, stdinW, pr, sc, err := newBashProcess()
 	if err != nil {
 		return fmt.Errorf("restart bash: %w", err)
 	}
 	s.cmd = cmd
 	s.stdin = stdinW
 	s.stdout = sc
+	s.pr = pr
 	return nil
 }
 
@@ -204,6 +211,9 @@ func (s *Shell) readSentinel(timeout time.Duration) (ExecResult, error) {
 
 // Close kills the bash subprocess.
 func (s *Shell) Close() {
+	if s.pr != nil {
+		s.pr.Close()
+	}
 	s.stdin.Close()
 	s.cmd.Process.Kill()
 	s.cmd.Wait()
