@@ -29,10 +29,6 @@ type Shell struct {
 
 // NewShell starts a bash subprocess and returns a ready Shell.
 func NewShell() (*Shell, error) {
-	return newShell()
-}
-
-func newShell() (*Shell, error) {
 	pr, pw, err := os.Pipe()
 	if err != nil {
 		return nil, fmt.Errorf("pipe: %w", err)
@@ -65,22 +61,6 @@ func newShell() (*Shell, error) {
 		stdin:  stdinW,
 		stdout: bufio.NewScanner(pr),
 	}, nil
-}
-
-// restart replaces the shell's internals with a fresh bash process.
-// Must be called with s.mu held.
-func (s *Shell) restart() error {
-	s.stdin.Close()
-	s.cmd.Wait() //nolint:errcheck
-
-	fresh, err := newShell()
-	if err != nil {
-		return err
-	}
-	s.cmd = fresh.cmd
-	s.stdin = fresh.stdin
-	s.stdout = fresh.stdout
-	return nil
 }
 
 // Exec runs cmd in the persistent bash shell and returns its output.
@@ -124,6 +104,7 @@ func isExitCommand(cmd string) bool {
 // capture the exit code without killing our bash process.
 func (s *Shell) execExit(cmd string, timeout time.Duration) (ExecResult, error) {
 	// Run in a subshell: ( exit 42 ) captures the exit code without killing bash.
+	// TODO: use per-shell unique temp files to support concurrent Shell instances
 	wrapped := fmt.Sprintf("( %s ) > /tmp/_stdout 2>/tmp/_stderr; echo \"EXIT:$?\"\n", cmd)
 	if _, err := fmt.Fprint(s.stdin, wrapped); err != nil {
 		return ExecResult{}, fmt.Errorf("write to shell: %w", err)
@@ -133,6 +114,7 @@ func (s *Shell) execExit(cmd string, timeout time.Duration) (ExecResult, error) 
 
 // execNormal handles regular (non-exit) commands.
 func (s *Shell) execNormal(cmd string, timeout time.Duration) (ExecResult, error) {
+	// TODO: use per-shell unique temp files to support concurrent Shell instances
 	wrapped := fmt.Sprintf("{ %s ; } > /tmp/_stdout 2>/tmp/_stderr; echo \"EXIT:$?\"\n", cmd)
 	if _, err := fmt.Fprint(s.stdin, wrapped); err != nil {
 		return ExecResult{}, fmt.Errorf("write to shell: %w", err)
