@@ -28,7 +28,7 @@ RUN apk add --no-cache \
     nodejs \
     npm
 
-RUN npm install -g @anthropic-ai/claude-code
+RUN npm install -g @anthropic-ai/claude-code@2.1.319
 
 RUN addgroup -g 101 sandbox && \
     adduser -D -u 65532 -G sandbox -h /home/sandbox sandbox
